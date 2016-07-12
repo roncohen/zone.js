@@ -59,7 +59,7 @@
 	timers_1.patchTimer(_global, set, clear, 'Timeout');
 	timers_1.patchTimer(_global, set, clear, 'Interval');
 	timers_1.patchTimer(_global, set, clear, 'Immediate');
-	timers_1.patchTimer(_global, 'request', 'cancelMacroTask', 'AnimationFrame');
+	timers_1.patchTimer(_global, 'request', 'cancel', 'AnimationFrame');
 	timers_1.patchTimer(_global, 'mozRequest', 'mozCancel', 'AnimationFrame');
 	timers_1.patchTimer(_global, 'webkitRequest', 'webkitCancel', 'AnimationFrame');
 	for (var i = 0; i < blockingMethods.length; i++) {
@@ -427,6 +427,14 @@
 	                }
 	            };
 	        }
+	        ZoneTask.prototype.toString = function () {
+	            if (this.data && typeof this.data.handleId !== 'undefined') {
+	                return this.data.handleId;
+	            }
+	            else {
+	                return this.toString();
+	            }
+	        };
 	        return ZoneTask;
 	    }());
 	    function __symbol__(name) { return '__zone_symbol__' + name; }
@@ -675,7 +683,7 @@
 	"use strict";
 	var utils_1 = __webpack_require__(3);
 	var WTF_ISSUE_555 = 'Anchor,Area,Audio,BR,Base,BaseFont,Body,Button,Canvas,Content,DList,Directory,Div,Embed,FieldSet,Font,Form,Frame,FrameSet,HR,Head,Heading,Html,IFrame,Image,Input,Keygen,LI,Label,Legend,Link,Map,Marquee,Media,Menu,Meta,Meter,Mod,OList,Object,OptGroup,Option,Output,Paragraph,Pre,Progress,Quote,Script,Select,Source,Span,Style,TableCaption,TableCell,TableCol,Table,TableRow,TableSection,TextArea,Title,Track,UList,Unknown,Video';
-	var NO_EVENT_TARGET = 'ApplicationCache,EventSource,FileReader,InputMethodContext,MediaController,MessagePort,Node,Performance,SVGElementInstance,SharedWorker,TextTrack,TextTrackCue,TextTrackList,WebKitNamedFlow,Worker,WorkerGlobalScope,XMLHttpRequest,XMLHttpRequestEventTarget,XMLHttpRequestUpload,IDBRequest,IDBOpenDBRequest,IDBDatabase,IDBTransaction,IDBCursor,DBIndex'.split(',');
+	var NO_EVENT_TARGET = 'ApplicationCache,EventSource,FileReader,InputMethodContext,MediaController,MessagePort,Node,Performance,SVGElementInstance,SharedWorker,TextTrack,TextTrackCue,TextTrackList,WebKitNamedFlow,Window,Worker,WorkerGlobalScope,XMLHttpRequest,XMLHttpRequestEventTarget,XMLHttpRequestUpload,IDBRequest,IDBOpenDBRequest,IDBDatabase,IDBTransaction,IDBCursor,DBIndex'.split(',');
 	var EVENT_TARGET = 'EventTarget';
 	function eventTargetPatch(_global) {
 	    var apis = [];
@@ -946,6 +954,9 @@
 	    var instance = new OriginalClass(function () { });
 	    var prop;
 	    for (prop in instance) {
+	        // https://bugs.webkit.org/show_bug.cgi?id=44721
+	        if (className === 'XMLHttpRequest' && prop === 'responseBlob')
+	            continue;
 	        (function (prop) {
 	            if (typeof instance[prop] === 'function') {
 	                _global[className].prototype[prop] = function () {
@@ -1041,7 +1052,7 @@
 	        return obj;
 	    };
 	    Object.create = function (obj, proto) {
-	        if (typeof proto === 'object') {
+	        if (typeof proto === 'object' && !Object.isFrozen(proto)) {
 	            Object.keys(proto).forEach(function (prop) {
 	                proto[prop] = rewriteDescriptor(obj, prop, proto[prop]);
 	            });
@@ -1287,7 +1298,17 @@
 	                delay: (nameSuffix === 'Timeout' || nameSuffix === 'Interval') ? args[1] || 0 : null,
 	                args: args
 	            };
-	            return zone.scheduleMacroTask(setName, args[0], options, scheduleTask, clearTask);
+	            var task = zone.scheduleMacroTask(setName, args[0], options, scheduleTask, clearTask);
+	            if (!task) {
+	                return task;
+	            }
+	            // Node.js must additionally support the ref and unref functions.
+	            var handle = task.data.handleId;
+	            if (handle.ref && handle.unref) {
+	                task.ref = handle.ref.bind(handle);
+	                task.unref = handle.unref.bind(handle);
+	            }
+	            return task;
 	        }
 	        else {
 	            // cause an error by calling it directly.

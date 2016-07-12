@@ -385,6 +385,14 @@
 	                }
 	            };
 	        }
+	        ZoneTask.prototype.toString = function () {
+	            if (this.data && typeof this.data.handleId !== 'undefined') {
+	                return this.data.handleId;
+	            }
+	            else {
+	                return this.toString();
+	            }
+	        };
 	        return ZoneTask;
 	    }());
 	    function __symbol__(name) { return '__zone_symbol__' + name; }
@@ -655,7 +663,17 @@
 	                delay: (nameSuffix === 'Timeout' || nameSuffix === 'Interval') ? args[1] || 0 : null,
 	                args: args
 	            };
-	            return zone.scheduleMacroTask(setName, args[0], options, scheduleTask, clearTask);
+	            var task = zone.scheduleMacroTask(setName, args[0], options, scheduleTask, clearTask);
+	            if (!task) {
+	                return task;
+	            }
+	            // Node.js must additionally support the ref and unref functions.
+	            var handle = task.data.handleId;
+	            if (handle.ref && handle.unref) {
+	                task.ref = handle.ref.bind(handle);
+	                task.unref = handle.unref.bind(handle);
+	            }
+	            return task;
 	        }
 	        else {
 	            // cause an error by calling it directly.
@@ -925,6 +943,9 @@
 	    var instance = new OriginalClass(function () { });
 	    var prop;
 	    for (prop in instance) {
+	        // https://bugs.webkit.org/show_bug.cgi?id=44721
+	        if (className === 'XMLHttpRequest' && prop === 'responseBlob')
+	            continue;
 	        (function (prop) {
 	            if (typeof instance[prop] === 'function') {
 	                _global[className].prototype[prop] = function () {
@@ -1078,12 +1099,40 @@
 	// shim for using process in browser
 
 	var process = module.exports = {};
+
+	// cached from whatever global is present so that test runners that stub it
+	// don't break things.  But we need to wrap it in a try catch in case it is
+	// wrapped in strict mode code which doesn't define any globals.  It's inside a
+	// function because try/catches deoptimize in certain engines.
+
+	var cachedSetTimeout;
+	var cachedClearTimeout;
+
+	(function () {
+	  try {
+	    cachedSetTimeout = setTimeout;
+	  } catch (e) {
+	    cachedSetTimeout = function () {
+	      throw new Error('setTimeout is not defined');
+	    }
+	  }
+	  try {
+	    cachedClearTimeout = clearTimeout;
+	  } catch (e) {
+	    cachedClearTimeout = function () {
+	      throw new Error('clearTimeout is not defined');
+	    }
+	  }
+	} ())
 	var queue = [];
 	var draining = false;
 	var currentQueue;
 	var queueIndex = -1;
 
 	function cleanUpNextTick() {
+	    if (!draining || !currentQueue) {
+	        return;
+	    }
 	    draining = false;
 	    if (currentQueue.length) {
 	        queue = currentQueue.concat(queue);
@@ -1099,7 +1148,7 @@
 	    if (draining) {
 	        return;
 	    }
-	    var timeout = setTimeout(cleanUpNextTick);
+	    var timeout = cachedSetTimeout(cleanUpNextTick);
 	    draining = true;
 
 	    var len = queue.length;
@@ -1116,7 +1165,7 @@
 	    }
 	    currentQueue = null;
 	    draining = false;
-	    clearTimeout(timeout);
+	    cachedClearTimeout(timeout);
 	}
 
 	process.nextTick = function (fun) {
@@ -1128,7 +1177,7 @@
 	    }
 	    queue.push(new Item(fun, args));
 	    if (queue.length === 1 && !draining) {
-	        setTimeout(drainQueue, 0);
+	        cachedSetTimeout(drainQueue, 0);
 	    }
 	};
 
